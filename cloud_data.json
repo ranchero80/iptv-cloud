@@ -1,0 +1,13 @@
+{
+  "monetizationEnabled": false,
+  "trialDays": 3,
+  "globalPlaylists": [
+    {
+      "id": "pl_cloud_93qts1eni",
+      "name": "IPTV Player Pro",
+      "url": "http://sfnooesvp.top:8080/get.php?username=heir001&password=Hehe321@espro&type=m3u_plus",
+      "epgUrl": null
+    }
+  ],
+  "devices": {}
+}
