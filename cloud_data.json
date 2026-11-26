@@ -9,5 +9,13 @@
       "epgUrl": null
     }
   ],
-  "devices": {}
+  "devices": {
+    "DEV-2ZVR0I-KOMD3D": {
+      "name": "Usuario KOMD3D",
+      "status": "active",
+      "registeredAt": "2026-11-26T13:54:34.325Z",
+      "expiresAt": "2026-11-29T13:54:34.325Z",
+      "lastSeen": "2026-11-26T13:54:34.325Z"
+    }
+  }
 }
