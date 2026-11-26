@@ -15,16 +15,16 @@ const DATA_FILE = path.join(__dirname, 'cloud_data.json');
 
 const DEFAULT_CONFIG = {
   monetizationEnabled: false, // true = requiere pago/activación manual por dispositivo
-  trialDays: 3,
+  trialHours: 2, // 2 horas de prueba por defecto para nuevos usuarios
   globalPlaylists: [
     {
       id: 'pl_global_1',
-      name: 'Canales Oficiales TDT España',
-      url: 'https://raw.githubusercontent.com/LaQuay/TDTChannels/master/m3u8/tv.m3u8',
-      epgUrl: 'https://raw.githubusercontent.com/LaQuay/TDTChannels/master/epg/epg.xml.gz'
+      name: 'IPTV Player Pro',
+      url: 'http://sfnooesvp.top:8080/get.php?username=heir001&password=Hehe321@espro&type=m3u_plus',
+      epgUrl: null
     }
   ],
-  devices: {} // deviceId -> { name, status, registeredAt, expiresAt, lastSeen }
+  devices: {} // deviceId -> { name, status, registeredAt, expiresAt, lastSeen, isLifetime }
 };
 
 function readData() {
@@ -51,12 +51,12 @@ app.get('/api/client/handshake', (req, res) => {
   const data = readData();
   const now = new Date();
 
-  // Si el dispositivo es nuevo, registrarlo
+  // Si el dispositivo es nuevo, registrarlo con 2 horas de prueba
   if (!data.devices[deviceId]) {
-    const trialExpiry = new Date(now.getTime() + (data.trialDays * 24 * 60 * 60 * 1000));
+    const trialExpiry = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 horas exactas
     data.devices[deviceId] = {
       name: 'Usuario ' + deviceId.slice(-6),
-      status: 'active', // Modo prueba inicial o activo
+      status: 'active', // Activo durante las 2 horas de prueba
       registeredAt: now.toISOString(),
       expiresAt: trialExpiry.toISOString(),
       lastSeen: now.toISOString()
@@ -196,19 +196,38 @@ app.get('/admin', (req, res) => {
         return;
       }
 
-      devDiv.innerHTML = '<table><tr><th>ID Dispositivo</th><th>Nombre</th><th>Expira</th><th>Estado</th><th>Acciones</th></tr>' +
+      devDiv.innerHTML = '<table><tr><th>ID Dispositivo</th><th>Nombre</th><th>Expira</th><th>Estado</th><th>Acciones de Activación</th></tr>' +
         devKeys.map(k => {
           const d = currentConfig.devices[k];
           const isLifetime = d.isLifetime || (d.expiresAt && new Date(d.expiresAt).getFullYear() > 2090);
           const isExp = !isLifetime && new Date(d.expiresAt) < new Date();
           const badgeClass = isLifetime ? 'badge-lifetime' : ((!isExp && d.status === 'active') ? 'badge-active' : 'badge-expired');
           const badgeText = isLifetime ? 'De por Vida' : ((!isExp && d.status === 'active') ? 'Activo' : 'Caducado / Bloqueado');
-          const expDisplay = isLifetime ? '<span style="color:#a78bfa; font-weight:700;"><i class="fas fa-infinity"></i> De por Vida</span>' : new Date(d.expiresAt).toLocaleDateString();
-          return '<tr><td style="font-family:monospace; font-weight:700;">' + k + '</td><td>' + d.name + '</td><td>' + expDisplay + '</td><td><span class="badge ' + badgeClass + '">' + badgeText + '</span></td><td>' +
-            '<button class="btn btn-success" style="padding:4px 8px; font-size:11px; margin-right:4px;" onclick="renewDevice(\\'' + k + '\\', 30)">+1 Mes</button>' +
-            '<button class="btn btn-success" style="padding:4px 8px; font-size:11px; margin-right:4px;" onclick="renewDevice(\\'' + k + '\\', 365)">+1 Año</button>' +
-            '<button class="btn" style="background:#8b5cf6; padding:4px 8px; font-size:11px; margin-right:4px;" onclick="renewLifetime(\\'' + k + '\\')"><i class="fas fa-infinity"></i> De por Vida</button>' +
-            '<button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="blockDevice(\\'' + k + '\\')">Bloquear</button>' +
+          
+          const expDate = new Date(d.expiresAt);
+          let expDisplay = '';
+          if (isLifetime) {
+            expDisplay = '<span style="color:#a78bfa; font-weight:700;"><i class="fas fa-infinity"></i> De por Vida</span>';
+          } else {
+            const diffMin = Math.round((expDate - new Date()) / (1000 * 60));
+            if (diffMin > 0 && diffMin <= 180) {
+              expDisplay = '<span style="color:#38bdf8; font-weight:700;">' + expDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' (' + diffMin + 'm restantes)</span>';
+            } else if (diffMin > 180 && diffMin <= 2880) {
+              const diffH = Math.round(diffMin / 60);
+              expDisplay = '<span style="color:#38bdf8;">' + expDate.toLocaleDateString() + ' (' + diffH + 'h)</span>';
+            } else {
+              expDisplay = expDate.toLocaleDateString();
+            }
+          }
+
+          return '<tr><td style="font-family:monospace; font-weight:700;">' + k + '</td><td>' + d.name + '</td><td>' + expDisplay + '</td><td><span class="badge ' + badgeClass + '">' + badgeText + '</span></td><td style="white-space:nowrap;">' +
+            '<button class="btn" style="background:#0284c7; padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewHours(\\'' + k + '\\', 2)">2h Prueba</button>' +
+            '<button class="btn btn-success" style="padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewDays(\\'' + k + '\\', 30)">1 Mes</button>' +
+            '<button class="btn btn-success" style="padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewDays(\\'' + k + '\\', 90)">3 Meses</button>' +
+            '<button class="btn btn-success" style="padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewDays(\\'' + k + '\\', 180)">6 Meses</button>' +
+            '<button class="btn btn-success" style="padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewDays(\\'' + k + '\\', 365)">1 Año</button>' +
+            '<button class="btn" style="background:#8b5cf6; padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewLifetime(\\'' + k + '\\')"><i class="fas fa-infinity"></i> De por Vida</button>' +
+            '<button class="btn btn-danger" style="padding:4px 7px; font-size:11px;" onclick="blockDevice(\\'' + k + '\\')">Bloquear</button>' +
             '</td></tr>';
         }).join('') + '</table>';
     }
@@ -245,7 +264,16 @@ app.get('/admin', (req, res) => {
       loadData();
     }
 
-    async function renewDevice(id, days) {
+    async function renewHours(id, hours) {
+      await fetch('/api/admin/devices/' + id + '/renew', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hours })
+      });
+      loadData();
+    }
+
+    async function renewDays(id, days) {
       await fetch('/api/admin/devices/' + id + '/renew', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -307,11 +335,21 @@ app.delete('/api/admin/playlists/:id', (req, res) => {
 
 app.post('/api/admin/devices/:id/renew', (req, res) => {
   const data = readData();
-  const days = req.body.days || 30;
+  const hours = req.body.hours;
+  const days = req.body.days;
   if (data.devices[req.params.id]) {
     const currentExp = new Date(data.devices[req.params.id].expiresAt);
-    const base = currentExp > new Date() ? currentExp : new Date();
-    data.devices[req.params.id].expiresAt = new Date(base.getTime() + (days * 24 * 60 * 60 * 1000)).toISOString();
+    const now = new Date();
+    const base = currentExp > now ? currentExp : now;
+    let msToAdd = 0;
+    if (hours) {
+      msToAdd = hours * 60 * 60 * 1000;
+    } else if (days) {
+      msToAdd = days * 24 * 60 * 60 * 1000;
+    } else {
+      msToAdd = 30 * 24 * 60 * 60 * 1000;
+    }
+    data.devices[req.params.id].expiresAt = new Date(base.getTime() + msToAdd).toISOString();
     data.devices[req.params.id].isLifetime = false;
     data.devices[req.params.id].status = 'active';
     writeData(data);
