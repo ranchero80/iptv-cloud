@@ -99,6 +99,132 @@ app.get('/api/client/handshake', (req, res) => {
   });
 });
 
+// ---------------------- ENDPOINTS PARA LAS APPS CLIENTES (MÓVIL / TV / PC) ----------------------
+const CHANNELS_CACHE_FILE = path.join(__dirname, 'channels_cache.json');
+let cachedChannelsData = null;
+function getChannelsData() {
+  if (cachedChannelsData) return cachedChannelsData;
+  if (fs.existsSync(CHANNELS_CACHE_FILE)) {
+    try {
+      cachedChannelsData = JSON.parse(fs.readFileSync(CHANNELS_CACHE_FILE, 'utf-8'));
+      return cachedChannelsData;
+    } catch(e) {}
+  }
+  return { channels: [], groups: [] };
+}
+
+app.get('/api/playlists', (req, res) => {
+  const data = readData();
+  const cData = getChannelsData();
+  const plList = (data.globalPlaylists || []).map(p => ({
+    id: p.id,
+    name: p.name,
+    type: 'xtream',
+    server: 'http://sfnooesvp.top:8080',
+    username: 'heir001',
+    password: 'Hehe321@espro',
+    url: p.url,
+    channelCount: cData.channels ? cData.channels.length : 1645,
+    groupCount: cData.groups ? cData.groups.length : 43
+  }));
+  res.json(plList);
+});
+
+app.get('/api/playlists/:id', (req, res) => {
+  const cData = getChannelsData();
+  res.json(cData);
+});
+
+let vodCache = { time: 0, data: null };
+let seriesCache = { time: 0, data: null };
+
+app.get('/api/playlists/:id/vod', async (req, res) => {
+  const now = Date.now();
+  if (vodCache.data && (now - vodCache.time < 600000)) {
+    return res.json(vodCache.data);
+  }
+
+  try {
+    const authUrl = 'http://sfnooesvp.top:8080/player_api.php?username=heir001&password=Hehe321@espro';
+    const [catRes, vodRes] = await Promise.all([
+      fetch(authUrl + '&action=get_vod_categories').then(r => r.json()),
+      fetch(authUrl + '&action=get_vod_streams').then(r => r.json())
+    ]);
+
+    const categories = Array.isArray(catRes) ? catRes : [];
+    const streams = Array.isArray(vodRes) ? vodRes : [];
+
+    const movies = streams.map(s => {
+      const ext = s.container_extension || 'mp4';
+      return {
+        id: 'xt_vod_' + s.stream_id,
+        streamId: s.stream_id,
+        name: s.name,
+        logo: s.stream_icon || '',
+        categoryId: s.category_id,
+        rating: s.rating || '',
+        added: s.added || '',
+        format: ext === 'mkv' ? 'mkv' : 'mp4',
+        url: `http://sfnooesvp.top:8080/movie/heir001/Hehe321@espro/${s.stream_id}.${ext}`
+      };
+    });
+
+    vodCache = { time: now, data: { categories, movies } };
+    res.json(vodCache.data);
+  } catch(e) {
+    console.error('[Cloud VOD Error]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/playlists/:id/series', async (req, res) => {
+  const now = Date.now();
+  if (seriesCache.data && (now - seriesCache.time < 600000)) {
+    return res.json(seriesCache.data);
+  }
+
+  try {
+    const authUrl = 'http://sfnooesvp.top:8080/player_api.php?username=heir001&password=Hehe321@espro';
+    const [catRes, serRes] = await Promise.all([
+      fetch(authUrl + '&action=get_series_categories').then(r => r.json()),
+      fetch(authUrl + '&action=get_series').then(r => r.json())
+    ]);
+
+    const categories = Array.isArray(catRes) ? catRes : [];
+    const series = Array.isArray(serRes) ? serRes : [];
+
+    seriesCache = { time: now, data: { categories, series } };
+    res.json(seriesCache.data);
+  } catch(e) {
+    console.error('[Cloud Series Error]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/playlists/:id/series_info', async (req, res) => {
+  const seriesId = req.query.series_id;
+  if (!seriesId) return res.status(400).json({ error: 'Falta series_id' });
+
+  try {
+    const authUrl = `http://sfnooesvp.top:8080/player_api.php?username=heir001&password=Hehe321@espro&action=get_series_info&series_id=${seriesId}`;
+    const data = await fetch(authUrl).then(r => r.json());
+    if (data && data.episodes) {
+      for (const season in data.episodes) {
+        data.episodes[season] = data.episodes[season].map(ep => {
+          const ext = ep.container_extension || 'mp4';
+          return {
+            ...ep,
+            streamUrl: `http://sfnooesvp.top:8080/series/heir001/Hehe321@espro/${ep.id}.${ext}`
+          };
+        });
+      }
+    }
+    res.json(data);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ---------------------- PANEL DE ADMINISTRACIÓN WEB ----------------------
 app.get('/admin', (req, res) => {
   res.send(`
