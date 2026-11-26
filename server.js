@@ -68,10 +68,11 @@ app.get('/api/client/handshake', (req, res) => {
   }
 
   const device = data.devices[deviceId];
-  const isExpired = new Date(device.expiresAt) < now;
+  const isLifetime = device.isLifetime || (device.expiresAt && new Date(device.expiresAt).getFullYear() > 2090);
+  const isExpired = !isLifetime && new Date(device.expiresAt) < now;
 
   let hasAccess = true;
-  let statusMessage = 'Licencia activa';
+  let statusMessage = isLifetime ? 'Licencia activa (De por vida)' : 'Licencia activa';
 
   if (data.monetizationEnabled) {
     if (device.status !== 'active') {
@@ -87,7 +88,8 @@ app.get('/api/client/handshake', (req, res) => {
     active: hasAccess,
     monetizationEnabled: data.monetizationEnabled,
     statusMessage,
-    expiresAt: device.expiresAt,
+    isLifetime,
+    expiresAt: isLifetime ? 'De por vida' : device.expiresAt,
     playlists: hasAccess ? data.globalPlaylists : []
   });
 });
@@ -117,6 +119,7 @@ app.get('/admin', (req, res) => {
     .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     .badge-active { background: #10b981; color: black; }
     .badge-expired { background: #ef4444; color: white; }
+    .badge-lifetime { background: #8b5cf6; color: white; }
     .switch-container { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; }
   </style>
 </head>
@@ -196,12 +199,15 @@ app.get('/admin', (req, res) => {
       devDiv.innerHTML = '<table><tr><th>ID Dispositivo</th><th>Nombre</th><th>Expira</th><th>Estado</th><th>Acciones</th></tr>' +
         devKeys.map(k => {
           const d = currentConfig.devices[k];
-          const isExp = new Date(d.expiresAt) < new Date();
-          const badgeClass = (!isExp && d.status === 'active') ? 'badge-active' : 'badge-expired';
-          const badgeText = (!isExp && d.status === 'active') ? 'Activo' : 'Caducado / Bloqueado';
-          return '<tr><td style="font-family:monospace; font-weight:700;">' + k + '</td><td>' + d.name + '</td><td>' + new Date(d.expiresAt).toLocaleDateString() + '</td><td><span class="badge ' + badgeClass + '">' + badgeText + '</span></td><td>' +
+          const isLifetime = d.isLifetime || (d.expiresAt && new Date(d.expiresAt).getFullYear() > 2090);
+          const isExp = !isLifetime && new Date(d.expiresAt) < new Date();
+          const badgeClass = isLifetime ? 'badge-lifetime' : ((!isExp && d.status === 'active') ? 'badge-active' : 'badge-expired');
+          const badgeText = isLifetime ? 'De por Vida' : ((!isExp && d.status === 'active') ? 'Activo' : 'Caducado / Bloqueado');
+          const expDisplay = isLifetime ? '<span style="color:#a78bfa; font-weight:700;"><i class="fas fa-infinity"></i> De por Vida</span>' : new Date(d.expiresAt).toLocaleDateString();
+          return '<tr><td style="font-family:monospace; font-weight:700;">' + k + '</td><td>' + d.name + '</td><td>' + expDisplay + '</td><td><span class="badge ' + badgeClass + '">' + badgeText + '</span></td><td>' +
             '<button class="btn btn-success" style="padding:4px 8px; font-size:11px; margin-right:4px;" onclick="renewDevice(\\'' + k + '\\', 30)">+1 Mes</button>' +
             '<button class="btn btn-success" style="padding:4px 8px; font-size:11px; margin-right:4px;" onclick="renewDevice(\\'' + k + '\\', 365)">+1 Año</button>' +
+            '<button class="btn" style="background:#8b5cf6; padding:4px 8px; font-size:11px; margin-right:4px;" onclick="renewLifetime(\\'' + k + '\\')"><i class="fas fa-infinity"></i> De por Vida</button>' +
             '<button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="blockDevice(\\'' + k + '\\')">Bloquear</button>' +
             '</td></tr>';
         }).join('') + '</table>';
@@ -245,6 +251,11 @@ app.get('/admin', (req, res) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ days })
       });
+      loadData();
+    }
+
+    async function renewLifetime(id) {
+      await fetch('/api/admin/devices/' + id + '/lifetime', { method: 'POST' });
       loadData();
     }
 
@@ -301,6 +312,18 @@ app.post('/api/admin/devices/:id/renew', (req, res) => {
     const currentExp = new Date(data.devices[req.params.id].expiresAt);
     const base = currentExp > new Date() ? currentExp : new Date();
     data.devices[req.params.id].expiresAt = new Date(base.getTime() + (days * 24 * 60 * 60 * 1000)).toISOString();
+    data.devices[req.params.id].isLifetime = false;
+    data.devices[req.params.id].status = 'active';
+    writeData(data);
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/admin/devices/:id/lifetime', (req, res) => {
+  const data = readData();
+  if (data.devices[req.params.id]) {
+    data.devices[req.params.id].expiresAt = new Date('2099-12-31T23:59:59.000Z').toISOString();
+    data.devices[req.params.id].isLifetime = true;
     data.devices[req.params.id].status = 'active';
     writeData(data);
   }
