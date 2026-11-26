@@ -5,7 +5,6 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin1234';
 
 app.use(cors());
 app.use(express.json());
@@ -59,6 +58,7 @@ app.get('/api/client/handshake', (req, res) => {
       status: 'active', // Activo durante las 2 horas de prueba
       registeredAt: now.toISOString(),
       expiresAt: trialExpiry.toISOString(),
+      isLifetime: false,
       lastSeen: now.toISOString()
     };
     writeData(data);
@@ -68,19 +68,24 @@ app.get('/api/client/handshake', (req, res) => {
   }
 
   const device = data.devices[deviceId];
-  const isLifetime = device.isLifetime || (device.expiresAt && new Date(device.expiresAt).getFullYear() > 2090);
-  const isExpired = !isLifetime && new Date(device.expiresAt) < now;
+  const isBlocked = (device.status === 'blocked');
+  const isLifetime = !isBlocked && (device.isLifetime === true);
+  const expDate = new Date(device.expiresAt);
+  const isExpired = !isBlocked && !isLifetime && (expDate < now);
 
   let hasAccess = true;
-  let statusMessage = isLifetime ? 'Licencia activa (De por vida)' : 'Licencia activa';
+  let statusMessage = 'Licencia activa';
 
-  if (data.monetizationEnabled) {
-    if (device.status !== 'active') {
+  if (isBlocked) {
+    hasAccess = false;
+    statusMessage = 'Dispositivo suspendido o bloqueado por el administrador.';
+  } else if (isLifetime) {
+    hasAccess = true;
+    statusMessage = 'Licencia permanente (De por vida).';
+  } else if (isExpired) {
+    if (data.monetizationEnabled) {
       hasAccess = false;
-      statusMessage = 'Dispositivo suspendido o pendiente de pago';
-    } else if (isExpired) {
-      hasAccess = false;
-      statusMessage = 'Tu suscripción ha caducado. Contacta al administrador para renovar.';
+      statusMessage = 'Tu suscripción o periodo de prueba ha caducado. Contacta al administrador para renovar.';
     }
   }
 
@@ -104,39 +109,102 @@ app.get('/admin', (req, res) => {
   <title>IPTV Pro Cloud - Panel de Control</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
+    * { box-sizing: border-box; }
     body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 24px; }
-    .container { max-width: 1000px; margin: 0 auto; }
-    h1, h2 { color: #38bdf8; }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1, h2 { color: #38bdf8; margin-top: 0; }
     .card { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 24px; border: 1px solid #334155; }
-    .btn { background: #0284c7; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    .btn { background: #0284c7; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; }
     .btn:hover { background: #0369a1; }
     .btn-danger { background: #ef4444; }
+    .btn-danger:hover { background: #dc2626; }
     .btn-success { background: #10b981; }
-    input, select { background: #0f172a; color: white; border: 1px solid #475569; padding: 10px; border-radius: 6px; width: 100%; box-sizing: border-box; margin-bottom: 12px; }
+    .btn-success:hover { background: #059669; }
+    input, select { background: #0f172a; color: white; border: 1px solid #475569; padding: 10px; border-radius: 6px; width: 100%; box-sizing: border-box; margin-bottom: 12px; font-size: 13.5px; }
     table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { text-align: left; padding: 12px; border-bottom: 1px solid #334155; font-size: 13.5px; }
-    th { color: #94a3b8; }
-    .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-    .badge-active { background: #10b981; color: black; }
-    .badge-expired { background: #ef4444; color: white; }
-    .badge-lifetime { background: #8b5cf6; color: white; }
-    .switch-container { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; }
+    th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid #334155; font-size: 13px; vertical-align: middle; }
+    th { color: #94a3b8; font-weight: 600; }
+    
+    /* Insignias de Estado con estilo sólido y sin saltos de línea */
+    .badge {
+      display: inline-block;
+      white-space: nowrap;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .badge-active { background: #10b981; color: #022c22; }
+    .badge-trial { background: #0284c7; color: #ffffff; }
+    .badge-lifetime { background: #8b5cf6; color: #ffffff; }
+    .badge-expired { background: #f97316; color: #ffffff; }
+    .badge-blocked { background: #ef4444; color: #ffffff; }
+    
+    .switch-container { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+    
+    /* Grupo de botones de activación */
+    .action-btn-group {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 5px;
+      align-items: center;
+    }
+    .btn-action {
+      padding: 5px 10px;
+      font-size: 11.5px;
+      border-radius: 6px;
+      border: none;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 700;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+    .btn-action:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    }
+    .btn-action:active {
+      transform: translateY(0);
+    }
+
+    /* Mensaje flotante de confirmación */
+    #toast {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #10b981;
+      color: #022c22;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+      display: none;
+      z-index: 9999;
+    }
   </style>
 </head>
 <body>
+  <div id="toast"></div>
+
   <div class="container">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
       <h1><i class="fas fa-cloud"></i> Panel Central IPTV Player Pro</h1>
-      <span style="color:#94a3b8; font-size:13px;">Servidor Cloud Master</span>
+      <button class="btn" style="background:#334155;" onclick="loadData()"><i class="fas fa-rotate"></i> Actualizar</button>
     </div>
 
     <!-- Control de Monetización -->
     <div class="card">
       <h2><i class="fas fa-dollar-sign"></i> Modelo de Negocio y Monetización</h2>
       <div class="switch-container">
-        <div>
+        <div style="max-width: 75%;">
           <div style="font-weight:600; font-size:16px;">Exigir Suscripción de Pago para ver Canales y VOD</div>
-          <div style="font-size:13px; color:#94a3b8;">Si está desactivado, cualquier usuario con tu app puede ver todo gratis. Al activarlo, solo verán los canales los clientes que tengan la licencia activa en la tabla inferior.</div>
+          <div style="font-size:13px; color:#94a3b8; margin-top:4px;">Si está desactivado, cualquier usuario con tu app puede ver todo gratis. Al activarlo, solo verán los canales los clientes que tengan la licencia activa en la tabla inferior.</div>
         </div>
         <button class="btn" id="btnToggleMonetization" onclick="toggleMonetization()">Cargando...</button>
       </div>
@@ -158,7 +226,7 @@ app.get('/admin', (req, res) => {
     <!-- Dispositivos y Clientes -->
     <div class="card">
       <h2><i class="fas fa-users"></i> Dispositivos de Usuarios y Control de Licencias</h2>
-      <div style="font-size:13px; color:#94a3b8;">Clientes que han abierto tu aplicación. Puedes activar su suscripción por meses o bloquearlos.</div>
+      <div style="font-size:13px; color:#94a3b8; margin-bottom:12px;">Clientes que han abierto tu aplicación. Pulsa cualquier botón para cambiar su estado al instante.</div>
       <div id="devicesTable"></div>
     </div>
   </div>
@@ -166,69 +234,115 @@ app.get('/admin', (req, res) => {
   <script>
     let currentConfig = null;
 
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      toast.style.background = isError ? '#ef4444' : '#10b981';
+      toast.style.color = isError ? '#ffffff' : '#022c22';
+      toast.innerHTML = (isError ? '<i class="fas fa-circle-exclamation"></i> ' : '<i class="fas fa-circle-check"></i> ') + msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2600);
+    }
+
     async function loadData() {
-      const res = await fetch('/api/admin/data');
-      currentConfig = await res.json();
-      renderUI();
+      try {
+        const res = await fetch('/api/admin/data');
+        currentConfig = await res.json();
+        renderUI();
+      } catch (err) {
+        showToast('Error cargando datos del servidor', true);
+      }
     }
 
     function renderUI() {
+      if (!currentConfig) return;
+
       // Botón Monetización
       const btn = document.getElementById('btnToggleMonetization');
       if (currentConfig.monetizationEnabled) {
-        btn.textContent = 'Modo Pago: ACTIVADO';
+        btn.innerHTML = '<i class="fas fa-lock"></i> Modo Pago: ACTIVADO';
         btn.className = 'btn btn-success';
       } else {
-        btn.textContent = 'Modo Gratuito: TODOS PUEDEN VER';
+        btn.innerHTML = '<i class="fas fa-lock-open"></i> Modo Gratuito: TODOS PUEDEN VER';
         btn.className = 'btn';
       }
 
       // Tabla Listas
       const plDiv = document.getElementById('playlistsTable');
       plDiv.innerHTML = '<table><tr><th>Nombre</th><th>URL</th><th>Acción</th></tr>' +
-        currentConfig.globalPlaylists.map(p => '<tr><td><strong>' + p.name + '</strong></td><td style="font-family:monospace; font-size:12px;">' + p.url + '</td><td><button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deletePlaylist(\\'' + p.id + '\\')">Eliminar</button></td></tr>').join('') + '</table>';
+        currentConfig.globalPlaylists.map(p => '<tr><td><strong>' + p.name + '</strong></td><td style="font-family:monospace; font-size:12px; color:#cbd5e1;">' + p.url + '</td><td><button class="btn btn-danger" style="padding:5px 10px; font-size:11px;" onclick="deletePlaylist(\\'' + p.id + '\\')"><i class="fas fa-trash"></i> Eliminar</button></td></tr>').join('') + '</table>';
 
       // Tabla Dispositivos
       const devDiv = document.getElementById('devicesTable');
-      const devKeys = Object.keys(currentConfig.devices);
+      const devKeys = Object.keys(currentConfig.devices || {});
       if (devKeys.length === 0) {
-        devDiv.innerHTML = '<div style="color:#94a3b8; padding:16px 0;">Aún no se ha conectado ningún dispositivo. Abre la app en PC o TV para verlo aquí.</div>';
+        devDiv.innerHTML = '<div style="color:#94a3b8; padding:20px 0; text-align:center;"><i class="fas fa-mobile-screen" style="font-size:24px; margin-bottom:8px; display:block;"></i>Aún no se ha conectado ningún dispositivo. Abre la app en PC o TV para verlo aquí.</div>';
         return;
       }
+
+      const now = new Date();
 
       devDiv.innerHTML = '<table><tr><th>ID Dispositivo</th><th>Nombre</th><th>Expira</th><th>Estado</th><th>Acciones de Activación</th></tr>' +
         devKeys.map(k => {
           const d = currentConfig.devices[k];
-          const isLifetime = d.isLifetime || (d.expiresAt && new Date(d.expiresAt).getFullYear() > 2090);
-          const isExp = !isLifetime && new Date(d.expiresAt) < new Date();
-          const badgeClass = isLifetime ? 'badge-lifetime' : ((!isExp && d.status === 'active') ? 'badge-active' : 'badge-expired');
-          const badgeText = isLifetime ? 'De por Vida' : ((!isExp && d.status === 'active') ? 'Activo' : 'Caducado / Bloqueado');
-          
+          const isBlocked = (d.status === 'blocked');
+          const isLifetime = !isBlocked && (d.isLifetime === true);
           const expDate = new Date(d.expiresAt);
+          const isExp = !isBlocked && !isLifetime && (expDate < now);
+
+          let badgeClass = 'badge-active';
+          let badgeText = 'ACTIVO';
           let expDisplay = '';
-          if (isLifetime) {
+
+          if (isBlocked) {
+            badgeClass = 'badge-blocked';
+            badgeText = 'BLOQUEADO';
+            expDisplay = '<span style="color:#ef4444; font-weight:700;"><i class="fas fa-ban"></i> Acceso Bloqueado</span>';
+          } else if (isLifetime) {
+            badgeClass = 'badge-lifetime';
+            badgeText = 'DE POR VIDA';
             expDisplay = '<span style="color:#a78bfa; font-weight:700;"><i class="fas fa-infinity"></i> De por Vida</span>';
+          } else if (isExp) {
+            badgeClass = 'badge-expired';
+            badgeText = 'CADUCADO';
+            expDisplay = '<span style="color:#f97316; font-weight:600;"><i class="fas fa-clock"></i> Caducado</span>';
           } else {
-            const diffMin = Math.round((expDate - new Date()) / (1000 * 60));
-            if (diffMin > 0 && diffMin <= 180) {
-              expDisplay = '<span style="color:#38bdf8; font-weight:700;">' + expDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' (' + diffMin + 'm restantes)</span>';
-            } else if (diffMin > 180 && diffMin <= 2880) {
+            // Activo o Prueba
+            const diffMin = Math.round((expDate - now) / (1000 * 60));
+            if (diffMin <= 180) {
+              badgeClass = 'badge-trial';
+              badgeText = 'PRUEBA (2H)';
+              expDisplay = '<span style="color:#38bdf8; font-weight:700;"><i class="fas fa-stopwatch"></i> ' + expDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' (' + diffMin + 'm restantes)</span>';
+            } else if (diffMin <= 2880) {
               const diffH = Math.round(diffMin / 60);
-              expDisplay = '<span style="color:#38bdf8;">' + expDate.toLocaleDateString() + ' (' + diffH + 'h)</span>';
+              badgeClass = 'badge-active';
+              badgeText = 'ACTIVO';
+              expDisplay = '<span style="color:#10b981; font-weight:600;">' + expDate.toLocaleDateString() + ' (' + diffH + 'h)</span>';
             } else {
-              expDisplay = expDate.toLocaleDateString();
+              const diffDays = Math.round(diffMin / (60 * 24));
+              badgeClass = 'badge-active';
+              badgeText = 'ACTIVO';
+              expDisplay = '<span style="color:#10b981; font-weight:600;">' + expDate.toLocaleDateString() + ' (' + diffDays + ' días)</span>';
             }
           }
 
-          return '<tr><td style="font-family:monospace; font-weight:700;">' + k + '</td><td>' + d.name + '</td><td>' + expDisplay + '</td><td><span class="badge ' + badgeClass + '">' + badgeText + '</span></td><td style="white-space:nowrap;">' +
-            '<button class="btn" style="background:#0284c7; padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewHours(\\'' + k + '\\', 2)">2h Prueba</button>' +
-            '<button class="btn btn-success" style="padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewDays(\\'' + k + '\\', 30)">1 Mes</button>' +
-            '<button class="btn btn-success" style="padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewDays(\\'' + k + '\\', 90)">3 Meses</button>' +
-            '<button class="btn btn-success" style="padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewDays(\\'' + k + '\\', 180)">6 Meses</button>' +
-            '<button class="btn btn-success" style="padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewDays(\\'' + k + '\\', 365)">1 Año</button>' +
-            '<button class="btn" style="background:#8b5cf6; padding:4px 7px; font-size:11px; margin-right:3px;" onclick="renewLifetime(\\'' + k + '\\')"><i class="fas fa-infinity"></i> De por Vida</button>' +
-            '<button class="btn btn-danger" style="padding:4px 7px; font-size:11px;" onclick="blockDevice(\\'' + k + '\\')">Bloquear</button>' +
-            '</td></tr>';
+          return '<tr>' +
+            '<td style="font-family:monospace; font-weight:700; color:#38bdf8;">' + k + '</td>' +
+            '<td><strong>' + (d.name || 'Dispositivo') + '</strong></td>' +
+            '<td>' + expDisplay + '</td>' +
+            '<td><span class="badge ' + badgeClass + '">' + badgeText + '</span></td>' +
+            '<td style="white-space:nowrap;">' +
+              '<div class="action-btn-group">' +
+                '<button class="btn-action" style="background:#0284c7;" onclick="setPlan(\\'' + k + '\\', \\'2h\\')" title="Asignar 2 horas de prueba">2h Prueba</button>' +
+                '<button class="btn-action" style="background:#10b981;" onclick="setPlan(\\'' + k + '\\', \\'1m\\')" title="Asignar 1 mes de acceso">1 Mes</button>' +
+                '<button class="btn-action" style="background:#10b981;" onclick="setPlan(\\'' + k + '\\', \\'3m\\')" title="Asignar 3 meses de acceso">3 Meses</button>' +
+                '<button class="btn-action" style="background:#10b981;" onclick="setPlan(\\'' + k + '\\', \\'6m\\')" title="Asignar 6 meses de acceso">6 Meses</button>' +
+                '<button class="btn-action" style="background:#10b981;" onclick="setPlan(\\'' + k + '\\', \\'1y\\')" title="Asignar 1 año de acceso">1 Año</button>' +
+                '<button class="btn-action" style="background:#8b5cf6;" onclick="setPlan(\\'' + k + '\\', \\'lifetime\\')" title="Asignar suscripción vitalicia"><i class="fas fa-infinity"></i> De por Vida</button>' +
+                '<button class="btn-action" style="background:#ef4444;" onclick="setPlan(\\'' + k + '\\', \\'block\\')" title="Bloquear acceso inmediatamente"><i class="fas fa-ban"></i> Bloquear</button>' +
+                '<button class="btn-action" style="background:#475569;" onclick="deleteDevice(\\'' + k + '\\')" title="Eliminar este dispositivo"><i class="fas fa-trash"></i></button>' +
+              '</div>' +
+            '</td>' +
+          '</tr>';
         }).join('') + '</table>';
     }
 
@@ -239,7 +353,8 @@ app.get('/admin', (req, res) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ monetizationEnabled: currentConfig.monetizationEnabled })
       });
-      loadData();
+      showToast(currentConfig.monetizationEnabled ? 'Modo Pago activado' : 'Modo Gratuito activado');
+      await loadData();
     }
 
     async function addPlaylist(e) {
@@ -255,44 +370,69 @@ app.get('/admin', (req, res) => {
       document.getElementById('plName').value = '';
       document.getElementById('plUrl').value = '';
       document.getElementById('plEpg').value = '';
-      loadData();
+      showToast('Lista maestra añadida');
+      await loadData();
     }
 
     async function deletePlaylist(id) {
       if (!confirm('¿Eliminar esta lista maestra para todos los clientes?')) return;
       await fetch('/api/admin/playlists/' + id, { method: 'DELETE' });
-      loadData();
+      showToast('Lista eliminada');
+      await loadData();
     }
 
-    async function renewHours(id, hours) {
-      await fetch('/api/admin/devices/' + id + '/renew', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hours })
-      });
-      loadData();
+    async function setPlan(id, planType) {
+      try {
+        let endpoint = '/api/admin/devices/' + id + '/renew';
+        let body = {};
+        let label = '';
+
+        if (planType === '2h') {
+          body = { hours: 2 };
+          label = '2 Horas de Prueba';
+        } else if (planType === '1m') {
+          body = { days: 30 };
+          label = '1 Mes de Suscripción';
+        } else if (planType === '3m') {
+          body = { days: 90 };
+          label = '3 Meses de Suscripción';
+        } else if (planType === '6m') {
+          body = { days: 180 };
+          label = '6 Meses de Suscripción';
+        } else if (planType === '1y') {
+          body = { days: 365 };
+          label = '1 Año de Suscripción';
+        } else if (planType === 'lifetime') {
+          endpoint = '/api/admin/devices/' + id + '/lifetime';
+          label = 'De por Vida (Permanente)';
+        } else if (planType === 'block') {
+          endpoint = '/api/admin/devices/' + id + '/block';
+          label = 'Bloqueado';
+        }
+
+        await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        showToast('Estado actualizado: ' + label);
+        await loadData();
+      } catch (e) {
+        showToast('Error al actualizar dispositivo', true);
+      }
     }
 
-    async function renewDays(id, days) {
-      await fetch('/api/admin/devices/' + id + '/renew', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days })
-      });
-      loadData();
-    }
-
-    async function renewLifetime(id) {
-      await fetch('/api/admin/devices/' + id + '/lifetime', { method: 'POST' });
-      loadData();
-    }
-
-    async function blockDevice(id) {
-      await fetch('/api/admin/devices/' + id + '/block', { method: 'POST' });
-      loadData();
+    async function deleteDevice(id) {
+      if (!confirm('¿Eliminar este dispositivo? Si vuelve a abrir la app, se registrará como nuevo con sus 2h de prueba gratis.')) return;
+      await fetch('/api/admin/devices/' + id, { method: 'DELETE' });
+      showToast('Dispositivo eliminado');
+      await loadData();
     }
 
     loadData();
+    // Auto-refrescar cada 15 segundos
+    setInterval(loadData, 15000);
   </script>
 </body>
 </html>
@@ -333,14 +473,14 @@ app.delete('/api/admin/playlists/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// Asignar duración específica (horas o días desde AHORA)
 app.post('/api/admin/devices/:id/renew', (req, res) => {
   const data = readData();
-  const hours = req.body.hours;
-  const days = req.body.days;
-  if (data.devices[req.params.id]) {
-    const currentExp = new Date(data.devices[req.params.id].expiresAt);
+  const device = data.devices[req.params.id];
+  if (device) {
     const now = new Date();
-    const base = currentExp > now ? currentExp : now;
+    const hours = req.body.hours;
+    const days = req.body.days;
     let msToAdd = 0;
     if (hours) {
       msToAdd = hours * 60 * 60 * 1000;
@@ -349,31 +489,46 @@ app.post('/api/admin/devices/:id/renew', (req, res) => {
     } else {
       msToAdd = 30 * 24 * 60 * 60 * 1000;
     }
-    data.devices[req.params.id].expiresAt = new Date(base.getTime() + msToAdd).toISOString();
-    data.devices[req.params.id].isLifetime = false;
-    data.devices[req.params.id].status = 'active';
+
+    // SIEMPRE calculamos desde NOW para que cambiar entre planes sea inmediato
+    device.expiresAt = new Date(now.getTime() + msToAdd).toISOString();
+    device.isLifetime = false;
+    device.status = 'active';
     writeData(data);
   }
-  res.json({ success: true });
+  res.json({ success: true, device: data.devices[req.params.id] });
 });
 
+// Asignar De por Vida
 app.post('/api/admin/devices/:id/lifetime', (req, res) => {
   const data = readData();
-  if (data.devices[req.params.id]) {
-    data.devices[req.params.id].expiresAt = new Date('2099-12-31T23:59:59.000Z').toISOString();
-    data.devices[req.params.id].isLifetime = true;
-    data.devices[req.params.id].status = 'active';
+  const device = data.devices[req.params.id];
+  if (device) {
+    device.expiresAt = new Date('2099-12-31T23:59:59.000Z').toISOString();
+    device.isLifetime = true;
+    device.status = 'active';
     writeData(data);
   }
-  res.json({ success: true });
+  res.json({ success: true, device: data.devices[req.params.id] });
 });
 
+// Bloquear dispositivo
 app.post('/api/admin/devices/:id/block', (req, res) => {
   const data = readData();
-  if (data.devices[req.params.id]) {
-    data.devices[req.params.id].status = 'blocked';
+  const device = data.devices[req.params.id];
+  if (device) {
+    device.status = 'blocked';
+    device.isLifetime = false;
     writeData(data);
   }
+  res.json({ success: true, device: data.devices[req.params.id] });
+});
+
+// Eliminar dispositivo
+app.delete('/api/admin/devices/:id', (req, res) => {
+  const data = readData();
+  delete data.devices[req.params.id];
+  writeData(data);
   res.json({ success: true });
 });
 
